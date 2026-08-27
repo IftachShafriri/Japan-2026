@@ -68,15 +68,34 @@
     ss.forEach(s=>{ if(net[s.from_participant_id]!==undefined) net[s.from_participant_id]+=Number(s.amount_minor); if(net[s.to_participant_id]!==undefined) net[s.to_participant_id]-=Number(s.amount_minor); });
     return {net,paid,owed,total:ex.reduce((a,e)=>a+Number(e.amount_minor),0)};
   }
-  function minimizedTransfers(currency){
-    const {net}=calcCurrency(currency); const debtors=[], creditors=[];
-    Object.entries(net).forEach(([id,n])=>{ if(n<0) debtors.push({id,amount:-n}); else if(n>0) creditors.push({id,amount:n}); });
-    debtors.sort((a,b)=>b.amount-a.amount); creditors.sort((a,b)=>b.amount-a.amount);
-    const out=[]; let i=0,j=0;
-    while(i<debtors.length&&j<creditors.length){ const amt=Math.min(debtors[i].amount,creditors[j].amount); if(amt>0) out.push({from:debtors[i].id,to:creditors[j].id,amount:amt,currency}); debtors[i].amount-=amt; creditors[j].amount-=amt; if(!debtors[i].amount)i++; if(!creditors[j].amount)j++; }
-    return out;
+  function directTransfers(currency){
+    // שומר חובות ישירים בלבד: כל משתתף חייב ישירות למי ששילם עבורו.
+    // אין קיזוז שרשרת בין A→B ו-B→C, ואין איחוד שלהם ל-A→C.
+    const ledger=new Map();
+    const ex=groupItems(state.expenses).filter(e=>e.currency===currency);
+    ex.forEach(e=>{
+      state.splits.filter(s=>s.expense_id===e.id).forEach(s=>{
+        if(s.participant_id===e.payer_id) return; // מי ששילם עבור עצמו לא חייב לעצמו
+        const amount=Number(s.amount_minor)||0;
+        if(amount<=0) return;
+        const key=`${s.participant_id}|${e.payer_id}`;
+        ledger.set(key,(ledger.get(key)||0)+amount);
+      });
+    });
+
+    // Settlement מפחית רק את החוב הישיר בין אותם שני אנשים ובאותו מטבע.
+    groupItems(state.settlements).filter(s=>s.currency===currency).forEach(s=>{
+      const key=`${s.from_participant_id}|${s.to_participant_id}`;
+      ledger.set(key,Math.max(0,(ledger.get(key)||0)-Number(s.amount_minor||0)));
+    });
+
+    return [...ledger.entries()]
+      .filter(([,amount])=>amount>0)
+      .map(([key,amount])=>{const [from,to]=key.split('|');return {from,to,amount,currency};})
+      .sort((a,b)=>(person(a.from)?.name||'').localeCompare(person(b.from)?.name||'','he') || (person(a.to)?.name||'').localeCompare(person(b.to)?.name||'','he'));
   }
-  function allTransfers(){ return Object.keys(CURRENCIES).flatMap(minimizedTransfers); }
+  function allTransfers(){ return Object.keys(CURRENCIES).flatMap(directTransfers); }
+  function directDebtAmount(from,to,currency){ return directTransfers(currency).find(t=>t.from===from&&t.to===to)?.amount||0; }
   function personMetrics(id){
     const out={}; for(const c of Object.keys(CURRENCIES)){ const x=calcCurrency(c); out[c]={paid:x.paid[id]||0,owed:x.owed[id]||0,net:x.net[id]||0}; } return out;
   }
@@ -98,7 +117,7 @@
     if(!transfers.length)return `<div class="card empty">אין חובות פתוחים 🎉</div>`;
     return `<div class="balance-list">${transfers.map(t=>`<div class="balance-row"><span class="person-link" data-person="${t.from}">${esc(person(t.from)?.name||'')}</span><span class="arrow">← חייב ל־</span><span class="person-link" data-person="${t.to}">${esc(person(t.to)?.name||'')}</span><div><strong class="money">${money(t.amount,t.currency)}</strong>${compact?'':` <button class="btn primary small settle-btn" data-from="${t.from}" data-to="${t.to}" data-amount="${t.amount}" data-currency="${t.currency}">סומן כשולם</button>`}</div></div>`).join('')}</div>`;
   }
-  function renderBalances(){ if(noGroup())return; $('#content').innerHTML=`<div class="card"><div class="section-head"><h2>חובות ממוזערים</h2><span class="muted">החישוב נעשה בנפרד לכל מטבע</span></div>${balanceHtml(allTransfers())}</div>`; bindCommon(); $$('.settle-btn').forEach(b=>b.addEventListener('click',()=>openSettlementModal(b.dataset))); }
+  function renderBalances(){ if(noGroup())return; $('#content').innerHTML=`<div class="card"><div class="section-head"><h2>חובות ישירים</h2><span class="muted">ללא קיזוז שרשרת · כל חוב נשאר בין מי שחייב למי ששילם</span></div>${balanceHtml(allTransfers())}</div>`; bindCommon(); $$('.settle-btn').forEach(b=>b.addEventListener('click',()=>openSettlementModal(b.dataset))); }
 
   function renderExpenses(){
     if(noGroup())return; const ps=groupItems(state.participants); const f=state.filters; let ex=groupItems(state.expenses);
@@ -150,7 +169,7 @@
 
   async function deleteExpense(id){ if(!confirm('למחוק את ההוצאה? החובות יתעדכנו מיד.'))return; try{if(CLOUD_ENABLED){const {error}=await sb.from('expense_splits').delete().eq('expense_id',id);if(error)throw error;}else state.splits=state.splits.filter(s=>s.expense_id!==id);await remove('expenses',id);state.expenses=state.expenses.filter(e=>e.id!==id);writeLocal();render();info('ההוצאה נמחקה');}catch(e){info(e.message,true)} }
 
-  function openSettlementModal(pref={}){ const ps=groupItems(state.participants); if(ps.length<2){info('צריך לפחות שני משתתפים',true);return;} const cur=pref.currency||'ILS'; const amt=pref.amount?Number(pref.amount)/10**CURRENCIES[cur].decimals:''; modal(modalFrame('סימון החזר תשלום',`<div class="modal-grid"><label>מי שילם<select id="sFrom">${ps.map(p=>`<option value="${p.id}" ${p.id===pref.from?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label><label>למי<select id="sTo">${ps.map(p=>`<option value="${p.id}" ${p.id===pref.to?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label><label>סכום<input id="sAmount" type="number" min="0" step="0.01" required value="${amt}"></label><label>מטבע<select id="sCurrency">${currencyOptions(cur)}</select></label><label>תאריך<input id="sDate" type="date" value="${today()}" required></label><label>הערה<input id="sNote" placeholder="אופציונלי"></label></div>`,'סומן כשולם')); $('#modalForm').onsubmit=async e=>{e.preventDefault();try{if($('#sFrom').value===$('#sTo').value)throw new Error('המשלם והמקבל חייבים להיות שונים');const currency=$('#sCurrency').value;const amount=parseMoney($('#sAmount').value,currency);const x=await insert('settlements',{group_id:state.currentGroupId,from_participant_id:$('#sFrom').value,to_participant_id:$('#sTo').value,amount_minor:amount,currency,settlement_date:$('#sDate').value,note:$('#sNote').value.trim(),...(CLOUD_ENABLED?{user_id:state.user.id}:{})});if(CLOUD_ENABLED)state.settlements.push(x);$('#modal').close();await refresh();info('החזר התשלום נשמר');}catch(err){info(err.message,true)}}; }
+  function openSettlementModal(pref={}){ const ps=groupItems(state.participants); if(ps.length<2){info('צריך לפחות שני משתתפים',true);return;} const cur=pref.currency||'ILS'; const amt=pref.amount?Number(pref.amount)/10**CURRENCIES[cur].decimals:''; modal(modalFrame('סימון החזר תשלום',`<div class="modal-grid"><label>מי שילם<select id="sFrom">${ps.map(p=>`<option value="${p.id}" ${p.id===pref.from?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label><label>למי<select id="sTo">${ps.map(p=>`<option value="${p.id}" ${p.id===pref.to?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label><label>סכום<input id="sAmount" type="number" min="0" step="0.01" required value="${amt}"></label><label>מטבע<select id="sCurrency">${currencyOptions(cur)}</select></label><label>תאריך<input id="sDate" type="date" value="${today()}" required></label><label>הערה<input id="sNote" placeholder="אופציונלי"></label></div>`,'סומן כשולם')); $('#modalForm').onsubmit=async e=>{e.preventDefault();try{if($('#sFrom').value===$('#sTo').value)throw new Error('המשלם והמקבל חייבים להיות שונים');const currency=$('#sCurrency').value;const amount=parseMoney($('#sAmount').value,currency);const from=$('#sFrom').value,to=$('#sTo').value;const openDebt=directDebtAmount(from,to,currency);if(amount<=0)throw new Error('הסכום חייב להיות גדול מאפס');if(openDebt<=0)throw new Error('אין חוב ישיר פתוח בין המשתתפים האלה במטבע שנבחר');if(amount>openDebt)throw new Error(`הסכום גבוה מהחוב הישיר הפתוח (${money(openDebt,currency)})`);const x=await insert('settlements',{group_id:state.currentGroupId,from_participant_id:from,to_participant_id:to,amount_minor:amount,currency,settlement_date:$('#sDate').value,note:$('#sNote').value.trim(),...(CLOUD_ENABLED?{user_id:state.user.id}:{})});if(CLOUD_ENABLED)state.settlements.push(x);$('#modal').close();await refresh();info('החזר התשלום נשמר');}catch(err){info(err.message,true)}}; }
   async function undoSettlement(id){ if(!confirm('לבטל את ההחזר? החוב יחזור מיד.'))return;try{await remove('settlements',id);state.settlements=state.settlements.filter(s=>s.id!==id);render();info('ה-settlement בוטל');}catch(e){info(e.message,true)} }
 
   function openPersonDetails(id){ const p=person(id);if(!p)return;const m=personMetrics(id);const participated=groupItems(state.expenses).filter(e=>state.splits.some(s=>s.expense_id===e.id&&s.participant_id===id));const paid=groupItems(state.expenses).filter(e=>e.payer_id===id);const transferIn=allTransfers().filter(t=>t.to===id),transferOut=allTransfers().filter(t=>t.from===id);modal(`<div class="modal-box"><div class="modal-head"><h2>${esc(p.name)}</h2><button type="button" class="icon-btn modal-close">✕</button></div><div class="grid cards" style="grid-template-columns:repeat(3,1fr)"><div class="mini-metric"><small>שילם</small>${Object.keys(CURRENCIES).map(c=>`<div>${money(m[c].paid,c)}</div>`).join('')}</div><div class="mini-metric"><small>אמור לשלם</small>${Object.keys(CURRENCIES).map(c=>`<div>${money(m[c].owed,c)}</div>`).join('')}</div><div class="mini-metric"><small>נטו</small>${Object.keys(CURRENCIES).map(c=>`<div class="${m[c].net>=0?'kpi-positive':'kpi-negative'}">${money(m[c].net,c)}</div>`).join('')}</div></div><div class="section"><h3>חייב לאחרים</h3>${balanceHtml(transferOut,true)}</div><div class="section"><h3>אחרים חייבים לו</h3>${balanceHtml(transferIn,true)}</div><div class="section"><h3>הוצאות שבהן השתתף (${participated.length})</h3><div class="chips">${participated.map(e=>`<span class="chip">${esc(e.description)} — ${money(e.amount_minor,e.currency)}</span>`).join('')||'<span class="muted">אין</span>'}</div></div><div class="section"><h3>הוצאות ששילם עליהן (${paid.length})</h3><div class="chips">${paid.map(e=>`<span class="chip">${esc(e.description)} — ${money(e.amount_minor,e.currency)}</span>`).join('')||'<span class="muted">אין</span>'}</div></div></div>`); $$('.modal-close').forEach(b=>b.addEventListener('click',()=>$('#modal').close())); }
