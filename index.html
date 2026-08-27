@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>SplitFlow — ניהול וחלוקת הוצאות</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="toastHost" class="toast-host"></div>
+
+  <section id="authView" class="auth-shell hidden">
+    <div class="auth-card">
+      <div class="brand brand-large"><span class="brand-mark">S</span><div><strong>SplitFlow</strong><small>הוצאות קבוצתיות בלי כאב ראש</small></div></div>
+      <div class="segmented auth-tabs"><button class="active" data-auth-tab="login">התחברות</button><button data-auth-tab="signup">הרשמה</button></div>
+      <form id="authForm" class="stack-lg">
+        <label>אימייל<input id="authEmail" type="email" required autocomplete="email" placeholder="name@example.com"></label>
+        <label>סיסמה<input id="authPassword" type="password" required minlength="6" autocomplete="current-password" placeholder="לפחות 6 תווים"></label>
+        <button class="btn primary wide" type="submit"><span id="authSubmitText">התחברות</span></button>
+      </form>
+      <p id="authHint" class="muted center">אין לך חשבון? עבור להרשמה.</p>
+    </div>
+  </section>
+
+  <div id="appShell" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">S</span><div><strong>SplitFlow</strong><small>Smart expense sharing</small></div></div>
+      <nav id="nav" class="nav-list">
+        <button class="nav-item active" data-page="dashboard">⌂ <span>Dashboard</span></button>
+        <button class="nav-item" data-page="expenses">▤ <span>Expenses</span></button>
+        <button class="nav-item" data-page="balances">⇄ <span>Balances</span></button>
+        <button class="nav-item" data-page="people">♙ <span>People</span></button>
+        <button class="nav-item" data-page="statistics">◔ <span>Statistics</span></button>
+        <button class="nav-item" data-page="settlements">✓ <span>Settlements</span></button>
+      </nav>
+      <div class="sidebar-bottom">
+        <button id="exportCsvBtn" class="btn ghost wide">יצוא CSV</button>
+        <button id="exportPdfBtn" class="btn ghost wide">יצוא PDF</button>
+        <button id="logoutBtn" class="btn danger-soft wide cloud-only">התנתקות</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-title"><button id="mobileMenuBtn" class="icon-btn mobile-only">☰</button><div><h1 id="pageTitle">Dashboard</h1><p id="pageSubtitle">תמונת מצב של הקבוצה</p></div></div>
+        <div class="topbar-actions">
+          <select id="groupSelect" class="group-select"></select>
+          <button id="newGroupBtn" class="btn ghost">+ קבוצה</button>
+          <button id="addExpenseBtn" class="btn primary">+ הוצאה</button>
+        </div>
+      </header>
+
+      <div id="content" class="content"></div>
+    </main>
+  </div>
+
+  <div id="mobileOverlay" class="mobile-overlay hidden"></div>
+
+  <dialog id="modal" class="modal"><div id="modalContent"></div></dialog>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+  <script src="supabase-config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
